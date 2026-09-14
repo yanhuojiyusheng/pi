@@ -127,6 +127,10 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	// OpenCode Go
 	{ provider: "opencode-go", model: "kimi-k2.5", label: "go-kimi-k2.5" },
 	{ provider: "opencode-go", model: "minimax-m2.5", label: "go-minimax-m2.5" },
+	// Command Code
+	{ provider: "command-code", model: "deepseek/deepseek-v4.1-flash", label: "command-code-deepseek-v4.1-flash" },
+	{ provider: "command-code", model: "z-ai/glm-5.3-flash", label: "command-code-glm-5.3-flash" },
+	{ provider: "command-code", model: "gpt-5.6-luna", label: "command-code-gpt-5.6-luna" },
 	// Xiaomi MiMo
 	{ provider: "xiaomi", model: "mimo-v2.5-pro", label: "xiaomi-mimo-v2.5-pro" },
 	{ provider: "xiaomi-token-plan-cn", model: "mimo-v2.5-pro", label: "xiaomi-token-plan-cn-mimo-v2.5-pro" },

@@ -292,14 +292,27 @@ const JSON_SCHEMA_META_DECLARATIONS = new Set([
 ]);
 
 /**
+ * JSON value produced by stripping JSON Schema meta-declarations for the Gemini
+ * OpenAPI `parameters` field.
+ */
+type OpenApiSchemaValue =
+	| string
+	| number
+	| boolean
+	| null
+	| OpenApiSchemaValue[]
+	| { [key: string]: OpenApiSchemaValue };
+
+/**
  * Strip meta-declarations from a schema obj
  */
-function sanitizeForOpenApi(schema: unknown): unknown {
+function sanitizeForOpenApi(schema: unknown): OpenApiSchemaValue {
 	if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
-		return schema;
+		// SAFETY: typebox schemas only carry JSON scalars outside objects and arrays.
+		return schema as OpenApiSchemaValue;
 	}
 
-	const result: Record<string, unknown> = {};
+	const result: { [key: string]: OpenApiSchemaValue } = {};
 	for (const [key, value] of Object.entries(schema)) {
 		if (JSON_SCHEMA_META_DECLARATIONS.has(key)) continue;
 		result[key] = sanitizeForOpenApi(value);

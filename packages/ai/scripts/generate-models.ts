@@ -224,6 +224,7 @@ const TOGETHER_TOGGLE_REASONING_LEVEL_MAP = {
 
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
+const COMMAND_CODE_BASE_URL = "https://api.commandcode.ai/provider/v1";
 const VERTEX_BASE_URL = "https://{location}-aiplatform.googleapis.com";
 const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_HEADERS = {
@@ -753,10 +754,6 @@ function openAICompletionsCompatDelta(compat: OpenAICompletionsResolvedCompat): 
 	return delta;
 }
 
-function mergeOpenAICompletionsCompat(model: Model<Api>, compat: OpenAICompletionsCompat): void {
-	model.compat = { ...(model.compat as OpenAICompletionsCompat | undefined), ...compat };
-}
-
 function applyOpenAICompletionsCompatMetadata(model: Model<Api>): void {
 	if (model.api !== "openai-completions") return;
 	const detected = openAICompletionsCompatDelta(detectOpenAICompletionsCompat(model as Model<"openai-completions">));
@@ -1137,8 +1134,39 @@ async function fetchNvidiaNimModelIds(): Promise<Map<string, string>> {
 	}
 }
 
-async function fetchOpenRouterModels(): Promise<Model<any>[]> {
-	try {
+interface CommandCodeModelListItem {
+	id: string;
+	name?: string;
+	context_length?: number;
+}
+
+/**
+ * Command Code requires the vendor-prefixed ids from its own catalog verbatim
+ * ("deepseek/deepseek-v4.1-flash"), while the public docs refer to them by page slug
+ * ("deepseek-v4-1-flash"). Normalize both to the slug so the curated metadata below can
+ * never ship an id the chat completions endpoint rejects.
+ */
+function normalizeCommandCodeModelId(id: string): string {
+	const bareId = id.split("/").pop() ?? id;
+	return bareId.replaceAll(".", "-");
+}
+
+async function fetchCommandCodeModels(): Promise<Map<string, CommandCodeModelListItem>> {
+	console.log("Fetching models from Command Code API...");
+	const response = await fetch(`${COMMAND_CODE_BASE_URL}/models`);
+	if (!response.ok) throw new Error(`Command Code API returned ${response.status}`);
+	const data = (await response.json()) as { data?: CommandCodeModelListItem[] };
+
+	const models = new Map<string, CommandCodeModelListItem>();
+	for (const model of data.data ?? []) {
+		models.set(normalizeCommandCodeModelId(model.id), model);
+	}
+
+	console.log(`Fetched ${models.size} models from Command Code`);
+	return models;
+}
+
+async function fetchOpenRouterModels(): Promise<Model<any>[]> {	try {
 		console.log("Fetching models from OpenRouter API...");
 		const response = await fetch("https://openrouter.ai/api/v1/models");
 		if (!response.ok) throw new Error(`OpenRouter API returned ${response.status}`);
@@ -2680,6 +2708,60 @@ async function generateModels() {
 		},
 	];
 	allModels.push(...deepseekModels);
+
+	// Command Code is an OpenAI-compatible aggregator. Its chat completions endpoint only accepts
+	// the vendor-prefixed ids from its own catalog, so ids, names and context windows come from
+	// that endpoint; only pricing is curated here. Costs are the off-peak GOAT-plan rates from
+	// https://commandcode.ai/docs/plans/goat; peak rates (01-04 and 06-10 UTC, Mon-Fri) are higher
+	// and the cost schema cannot express them.
+	const commandCodeCatalog = await fetchCommandCodeModels();
+	const commandCodeCompat: OpenAICompletionsCompat = {
+		requiresReasoningContentOnAssistantMessages: true,
+		thinkingFormat: "deepseek",
+	};
+	const commandCodeSpecs: Array<{
+		slug: string;
+		input: ("text" | "image")[];
+		cost: Model<"openai-completions">["cost"];
+		compat?: OpenAICompletionsCompat;
+	}> = [
+		{
+			slug: "deepseek-v4-1-flash",
+			input: ["text", "image"],
+			cost: { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0 },
+			compat: commandCodeCompat,
+		},
+		{
+			slug: "glm-5-3-flash",
+			input: ["text"],
+			cost: { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+		},
+		{
+			slug: "gpt-5-6-luna",
+			input: ["text", "image"],
+			cost: { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
+		},
+	];
+	const commandCodeModels: Model<"openai-completions">[] = commandCodeSpecs.map((spec) => {
+		const upstream = commandCodeCatalog.get(spec.slug);
+		if (!upstream || !upstream.context_length) {
+			throw new Error(`Command Code model ${spec.slug} is missing from ${COMMAND_CODE_BASE_URL}/models`);
+		}
+		return {
+			id: upstream.id,
+			name: upstream.name ?? upstream.id,
+			api: "openai-completions",
+			baseUrl: COMMAND_CODE_BASE_URL,
+			provider: "command-code",
+			reasoning: true,
+			input: spec.input,
+			cost: spec.cost,
+			contextWindow: upstream.context_length,
+			maxTokens: 128000,
+			...(spec.compat ? { compat: spec.compat } : {}),
+		};
+	});
+	allModels.push(...commandCodeModels);
 
 	const antLingCompat: OpenAICompletionsCompat = {
 		supportsStore: false,

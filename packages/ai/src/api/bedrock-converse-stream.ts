@@ -211,6 +211,9 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				// Use NodeHttpHandler to support HTTP(S) proxy agents.
 				config.requestHandler = new NodeHttpHandler({
 					httpAgent: new HttpProxyAgent(proxyUrl),
+					// SAFETY: https-proxy-agent's HttpsProxyAgent implements the Node agent
+					// interface NodeHttpHandler drives; smithy's HttpsAgent alias only separates
+					// http from https nominally. Proxy plumbing is covered by node-http-proxy.test.ts.
 					httpsAgent: new HttpsProxyAgent(proxyUrl) as unknown as HttpsAgent,
 				});
 			} else if (getProviderEnvValue("AWS_BEDROCK_FORCE_HTTP1", options.env) === "1") {
@@ -897,7 +900,7 @@ function createRequiredTextBlock(text: string): ContentBlock.TextMember {
 	return createNonBlankTextBlock(text) ?? { text: EMPTY_TEXT_PLACEHOLDER };
 }
 
-function sanitizeBedrockDocument(value: DocumentType): DocumentType {
+function sanitizeBedrockDocument(value: unknown): DocumentType {
 	if (Array.isArray(value)) {
 		return value.map(sanitizeBedrockDocument);
 	}
@@ -908,7 +911,8 @@ function sanitizeBedrockDocument(value: DocumentType): DocumentType {
 				.map(([key, nestedValue]) => [key, sanitizeBedrockDocument(nestedValue)]),
 		);
 	}
-	return value;
+	// Arrays and objects were handled above, so only DocumentType scalars remain.
+	return value as DocumentType;
 }
 
 function convertToolResultContent(content: (TextContent | ImageContent)[]): ToolResultContentBlock[] {
@@ -1109,11 +1113,13 @@ function convertToolConfig(
 
 	const bedrockTools: BedrockTool[] = tools.map((tool) => {
 		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+		// SAFETY: Bedrock's inputSchema.json field accepts any JSON document, and a JSON Schema is one.
+		const inputSchemaJson = getJsonSchemaToolParameters(tool, strict) as unknown as DocumentType;
 		return {
 			toolSpec: {
 				name: tool.name,
 				description: tool.description,
-				inputSchema: { json: getJsonSchemaToolParameters(tool, strict) as unknown as DocumentType },
+				inputSchema: { json: inputSchemaJson },
 				...(strict === true ? { strict: true } : {}),
 			},
 		};
@@ -1213,10 +1219,13 @@ function isGovCloudBedrockTarget(model: Model<"bedrock-converse-stream">, option
 	return modelId.startsWith("us-gov.") || modelId.startsWith("arn:aws-us-gov:");
 }
 
+/** JSON object accepted by Bedrock document-typed request fields. */
+type BedrockDocumentObject = { [key: string]: DocumentType };
+
 function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
-): Record<string, any> | undefined {
+): BedrockDocumentObject | undefined {
 	if (!options.reasoning || !model.reasoning) {
 		return undefined;
 	}
@@ -1225,7 +1234,7 @@ function buildAdditionalModelRequestFields(
 		// GovCloud Bedrock currently rejects the Claude thinking.display field.
 		// Omit it there until the GovCloud Converse schema catches up.
 		const display = isGovCloudBedrockTarget(model, options) ? undefined : (options.thinkingDisplay ?? "summarized");
-		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
+		const result: BedrockDocumentObject = supportsAdaptiveThinking(model.id, model.name)
 			? {
 					thinking: { type: "adaptive", ...(display !== undefined ? { display } : {}) },
 					output_config: { effort: mapThinkingLevelToEffort(model, options.reasoning) },

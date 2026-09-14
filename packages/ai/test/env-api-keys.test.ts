@@ -79,6 +79,13 @@ describe("environment API keys", () => {
 		expect(getEnvApiKey("zai-coding-cn")).toBe("zai-coding-cn-token");
 	});
 
+	it("resolves Command Code credentials from COMMAND_CODE_API_KEY", () => {
+		process.env.COMMAND_CODE_API_KEY = "command-code-token";
+
+		expect(findEnvKeys("command-code")).toEqual(["COMMAND_CODE_API_KEY"]);
+		expect(getEnvApiKey("command-code")).toBe("command-code-token");
+	});
+
 	it("reports ANTHROPIC_AUTH_TOKEN but preserves OAuth token API key lookup", () => {
 		process.env.ANTHROPIC_AUTH_TOKEN = "auth-token";
 		process.env.ANTHROPIC_OAUTH_TOKEN = "oauth-token";

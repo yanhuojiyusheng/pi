@@ -304,7 +304,7 @@ async function multiTurn<TApi extends Api>(model: Model<TApi>, options?: StreamO
 				expect(block.id).toBeTruthy();
 				expect(block.arguments).toBeTruthy();
 
-				const { a, b, operation } = block.arguments;
+				const { a, b, operation } = block.arguments as { a: number; b: number; operation: string };
 				let result: number;
 				switch (operation) {
 					case "add":
@@ -807,6 +807,34 @@ describe("Generate E2E Tests", () => {
 			await multiTurn(llm, options);
 		});
 	});
+
+	describe.skipIf(!process.env.COMMAND_CODE_API_KEY)(
+		"Command Code Provider (GPT-5.6 Luna via OpenAI Completions)",
+		() => {
+			const llm = getModel("command-code", "gpt-5.6-luna");
+			const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
+
+			it("should complete basic text generation", { retry: 3 }, async () => {
+				await basicTextGeneration(llm, options);
+			});
+
+			it("should handle tool calling", { retry: 3 }, async () => {
+				await handleToolCall(llm, options);
+			});
+
+			it("should handle streaming", { retry: 3 }, async () => {
+				await handleStreaming(llm, options);
+			});
+
+			it("should handle thinking mode", { retry: 3 }, async () => {
+				await handleThinking(llm, options);
+			});
+
+			it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+				await multiTurn(llm, options);
+			});
+		},
+	);
 
 	describe.skipIf(!process.env.NVIDIA_API_KEY)("NVIDIA NIM Provider (Nemotron 3 Super via OpenAI Completions)", () => {
 		const llm = getModel("nvidia", "nvidia/nemotron-3-super-120b-a12b");
